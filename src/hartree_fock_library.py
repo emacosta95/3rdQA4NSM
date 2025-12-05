@@ -550,3 +550,117 @@ class HFEnergyFunctionalNuclear(nn.Module):
 
         
         return E1 + E2
+    
+import torch
+import torch.nn as nn
+
+class HFEnergyFunctionalUnitary(nn.Module):
+    def __init__(self, h_input, V_dict, num_particles, dtype=torch.float64, device=None, complex_dtype=False):
+        """
+        h_input: 1D (h_vec) or 2D (h_mat) array-like (numpy or torch)
+        V_dict: dict indexed by (a,b,c,d) -> value (numpy/float/complex)
+        num_particles: N (number of particles)
+        dtype: real dtype for reals (torch.float64)
+        complex_dtype: if True use complex128
+        """
+        super().__init__()
+
+        # choose dtype/device
+        if complex_dtype:
+            self.dtype = torch.complex128
+            real_dtype = torch.float64
+        else:
+            self.dtype = dtype
+            real_dtype = dtype
+
+        if device is None:
+            device = torch.device("cpu")
+        self.device = device
+
+        # convert h to torch tensor and promote to matrix if needed
+        h_t = torch.as_tensor(h_input, dtype=real_dtype, device=self.device)
+        if h_t.ndim == 1:
+            h_t = torch.diag(h_t)   # promote to matrix
+        elif h_t.ndim != 2:
+            raise ValueError("h_input must be 1D or 2D")
+
+        if complex_dtype:
+            h_t = h_t.to(self.dtype)  # will cast to complex (imag part zero)
+        else:
+            h_t = h_t.to(self.dtype)
+
+        self.h = h_t
+        self.M = self.h.shape[0]
+        self.N = num_particles
+
+        assert self.h.ndim == 2 and self.h.shape[0] == self.h.shape[1], "h must be (M,M)"
+
+        # Build V tensor with same dtype/device
+        # Start from real dtype and then cast to complex if needed
+        V_t = torch.zeros((self.M, self.M, self.M, self.M), dtype=real_dtype, device=self.device)
+        for (a, b, c, d), val in V_dict.items():
+            V_t[a, b, c, d] = val
+        if complex_dtype:
+            V_t = V_t.to(self.dtype)
+        else:
+            V_t = V_t.to(self.dtype)
+
+        self.V = V_t
+
+        # Initialize full-square A with same dtype (if complex, initialize complex A)
+        if complex_dtype:
+            A_real = torch.randn(self.M, self.M, dtype=real_dtype, device=self.device)
+            A_imag = torch.randn(self.M, self.M, dtype=real_dtype, device=self.device) * 1e-6
+            A_init = A_real.to(self.dtype) + 1j * A_imag.to(self.dtype)
+            self.A = nn.Parameter(A_init)
+        else:
+            A_init = torch.randn(self.M, self.M, dtype=self.dtype, device=self.device)
+            self.A = nn.Parameter(A_init)
+
+    def forward(self):
+        # ensure dtype/device consistency (defensive)
+        assert self.A.dtype == self.h.dtype, f"dtype mismatch A {self.A.dtype} vs h {self.h.dtype}"
+        assert self.A.device == self.h.device, f"device mismatch A {self.A.device} vs h {self.h.device}"
+
+        # get unitary (QR gives Q with shape (M,M)); for complex dtype torch.linalg.qr supports complex.
+        U, _ = torch.linalg.qr(self.A)
+
+        Cocc = U[:, : self.N]   # occupied columns
+        rho = Cocc @ Cocc.conj().T   # (M,M), works for real and complex
+
+        E1 = torch.einsum("ab,ba->", self.h, rho)   # one-body
+        E2 = 0.5 * torch.einsum("abcd,ca,db->", self.V, rho, rho)  # two-body
+
+        # store for external use
+        self.U = U.detach()
+        self.rho = rho.detach()
+
+        return E1 + E2
+
+
+def build_fock_matrix(h_mat, V_tensor, rho):
+    # F_ab = h_ab + sum_cd V_acbd * rho_dc
+    # here V_tensor shape (M,M,M,M), rho shape (M,M)
+    F = h_mat.copy()
+    M = h_mat.shape[0]
+    # einsum way (numpy)
+    F += 0.5*np.einsum("acbd,dc->ab", V_tensor, rho)
+    # ensure Hermitian
+    F = 0.5 * (F + F.T.conj())
+    return F
+
+
+
+# -------------------------
+# Transform integrals with unitary U_can
+# -------------------------
+def transform_integrals(U, h, V):
+    # U: full MxM unitary that maps new_alpha <- old_b  (i.e. a^dag_alpha = sum_b U[alpha,b] c^dag_b)
+    # transforms: h' = U @ h @ U^H
+    h_p = U @ h @ U.conj().T
+    # two-step contraction for V'_{pqrs} = sum_{abcd} U_{p a} U_{q b} V_{abcd} U*_{r c} U*_{s d}
+    # do in numpy with einsum (not memory optimized but fine for small M)
+    V_p = np.einsum("pa,qb,abcd,rc,sd->pqrs", U, U, V, U.conj(), U.conj())
+    # antisymmetrize if needed: Vbar_p = V_p - V_p.swapaxes(2,3)
+    Vbar_p = V_p - V_p.transpose(0,1,3,2)
+    return h_p, V_p, Vbar_p
