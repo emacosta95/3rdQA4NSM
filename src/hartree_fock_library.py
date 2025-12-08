@@ -638,16 +638,48 @@ class HFEnergyFunctionalUnitary(nn.Module):
         return E1 + E2
 
 
-def build_fock_matrix(h_mat, V_tensor, rho):
-    # F_ab = h_ab + sum_cd V_acbd * rho_dc
-    # here V_tensor shape (M,M,M,M), rho shape (M,M)
-    F = h_mat.copy()
-    M = h_mat.shape[0]
-    # einsum way (numpy)
-    F += 0.5*np.einsum("acbd,dc->ab", V_tensor, rho)
-    # ensure Hermitian
-    F = 0.5 * (F + F.T.conj())
-    return F
+def build_fock_matrices(self, rho_n, rho_p=None):
+    """
+    Builds neutron and proton Fock matrices.
+
+    rho_n: (M,M)
+    rho_p: (M,M) or None
+    V_tensor: (M,M,M,M)
+    h: (M,)
+    """
+
+    M = rho_n.shape[0]
+    h_mat = torch.diag(self.h[:M])
+
+    # --- Neutron Fock ---
+    F_n = h_mat.clone()
+
+    # nn term
+    F_n += torch.einsum("acbd,dc->ab", self.V_tensor, rho_n)
+
+    if rho_p is not None:
+        # np cross term
+        F_n += torch.einsum("acbd,dc->ab", self.V_tensor, rho_p)
+
+    # Hermitian symmetrization
+    F_n = 0.5 * (F_n + F_n.T)
+
+    # --- Proton Fock ---
+    if rho_p is not None:
+        F_p = h_mat.clone()
+
+        # pp term
+        F_p += torch.einsum("acbd,dc->ab", self.V_tensor, rho_p)
+
+        # pn cross term
+        F_p += torch.einsum("acbd,dc->ab", self.V_tensor, rho_n)
+
+        F_p = 0.5 * (F_p + F_p.T)
+
+        return F_n, F_p
+
+    return F_n
+
 
 
 
