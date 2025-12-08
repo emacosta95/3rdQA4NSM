@@ -487,6 +487,70 @@ class HFEnergyFunctional(nn.Module):
         return E1 + E2
     
     
+# class HFEnergyFunctionalNuclear(nn.Module):
+#     def __init__(self, h_vec, V_dict, num_neutrons, num_protons, neutron_indices, proton_indices):
+#         super().__init__()
+#         self.h = h_vec  # [M]
+#         self.M = h_vec.shape[0]
+#         self.Nn = num_neutrons
+#         self.Np = num_protons
+
+#         self.proton_idx = proton_indices
+#         if num_protons!=0:
+#             self.V_tensor = torch.zeros((self.M, self.M, self.M, self.M), dtype=h_vec.dtype)
+#             for (a, b, c, d), val in V_dict.items():
+#                 self.V_tensor[a, b, c, d] = val
+#         else:
+#             self.V_tensor = torch.zeros((self.M//2, self.M//2, self.M//2, self.M//2), dtype=h_vec.dtype)
+#             for (a, b, c, d), val in V_dict.items():
+#                 if a<self.M//2 and a<self.M//2 and b<self.M//2 and c<self.M//2  and d<self.M//2: 
+#                     self.V_tensor[a, b, c, d] = val
+#         self.A_n = nn.Parameter(torch.randn(self.proton_idx, self.Nn,dtype=h_vec.dtype))
+#         if num_protons!=0:
+#             self.A_p = nn.Parameter(torch.randn(self.proton_idx, self.Np,dtype=h_vec.dtype))
+
+#     def forward(self):
+#         C_n_local, _ = torch.linalg.qr(self.A_n)
+#         if self.Np!=0:
+#             C_p_local, _ = torch.linalg.qr(self.A_p)
+
+#             C_n = torch.zeros((self.M, self.Nn), dtype=C_n_local.dtype, device=C_n_local.device)
+#         else:
+#              C_n_local=C_n_local[ :self.M//2]
+#              C_n = torch.zeros((self.M//2, self.Nn), dtype=C_n_local.dtype, device=C_n_local.device)
+#         if self.Np!=0:
+#             C_p = torch.zeros((self.M, self.Np), dtype=C_p_local.dtype, device=C_p_local.device)
+        
+        
+#         C_n[:self.proton_idx, :] = C_n_local
+#         if self.Np!=0:
+#             C_p[self.proton_idx:, :] = C_p_local
+
+#             self.rho_p = C_p @ C_p.T
+
+#         self.rho_n = C_n @ C_n.T
+#         if self.Np!=0:
+            
+#             E1 = torch.dot(self.h, torch.diagonal(self.rho_n + self.rho_p))
+#             E2 = (
+#             0.5 * torch.einsum('abcd,ca,db->', self.V_tensor, self.rho_n, self.rho_n) +
+#             0.5 * torch.einsum('abcd,ca,db->', self.V_tensor, self.rho_p, self.rho_p) +
+#             torch.einsum('abcd,ca,db->', self.V_tensor, self.rho_n, self.rho_p)
+#             )
+#             self.C_p=C_p.clone()
+        
+        
+#         else:
+#             E1 = torch.dot(self.h[:self.M//2], torch.diagonal(self.rho_n ))
+#             E2 = (
+#             0.5 * torch.einsum('abcd,ca,db->', self.V_tensor, self.rho_n, self.rho_n) 
+#             )
+            
+#         self.C_n=C_n.clone()        
+
+        
+#         return E1 + E2
+    
 class HFEnergyFunctionalNuclear(nn.Module):
     def __init__(self, h_vec, V_dict, num_neutrons, num_protons, neutron_indices, proton_indices):
         super().__init__()
@@ -503,7 +567,7 @@ class HFEnergyFunctionalNuclear(nn.Module):
         else:
             self.V_tensor = torch.zeros((self.M//2, self.M//2, self.M//2, self.M//2), dtype=h_vec.dtype)
             for (a, b, c, d), val in V_dict.items():
-                if a<self.M//2 and a<self.M//2 and b<self.M//2 and c<self.M//2  and d<self.M//2: 
+                if  a<self.M//2 and b<self.M//2 and c<self.M//2  and d<self.M//2: 
                     self.V_tensor[a, b, c, d] = val
         self.A_n = nn.Parameter(torch.randn(self.proton_idx, self.Nn,dtype=h_vec.dtype))
         if num_protons!=0:
@@ -526,33 +590,127 @@ class HFEnergyFunctionalNuclear(nn.Module):
         if self.Np!=0:
             C_p[self.proton_idx:, :] = C_p_local
 
-            rho_p = C_p @ C_p.T
+            self.rho_p = C_p @ C_p.T
 
-        rho_n = C_n @ C_n.T
+        self.rho_n = C_n @ C_n.T
         if self.Np!=0:
             
-            E1 = torch.dot(self.h, torch.diagonal(rho_n + rho_p))
+            E1 = torch.dot(self.h, torch.diagonal(self.rho_n + self.rho_p))
             E2 = (
-            0.5 * torch.einsum('abcd,ca,db->', self.V_tensor, rho_n, rho_n) +
-            0.5 * torch.einsum('abcd,ca,db->', self.V_tensor, rho_p, rho_p) +
-            torch.einsum('abcd,ca,db->', self.V_tensor, rho_n, rho_p)
+            0.5 * torch.einsum('abcd,ca,db->', self.V_tensor, self.rho_n, self.rho_n) +
+            0.5 * torch.einsum('abcd,ca,db->', self.V_tensor, self.rho_p, self.rho_p) +
+            torch.einsum('abcd,ca,db->', self.V_tensor, self.rho_n, self.rho_p)
             )
             self.C_p=C_p.clone()
         
         
         else:
-            E1 = torch.dot(self.h[:self.M//2], torch.diagonal(rho_n ))
+            E1 = torch.dot(self.h[:self.M//2], torch.diagonal(self.rho_n ))
             E2 = (
-            0.5 * torch.einsum('abcd,ca,db->', self.V_tensor, rho_n, rho_n) 
+            0.5 * torch.einsum('abcd,ca,db->', self.V_tensor, self.rho_n, self.rho_n) 
             )
             
         self.C_n=C_n.clone()        
 
         
         return E1 + E2
+
+
+    def build_mixed_fock_matrix(self):
+        """
+        Builds a single Fock matrix including mixed neutron-proton contributions.
+        Assumes self.rho_n and self.rho_p are full MxM density matrices.
+        """
+        M = self.rho_n.shape[0]
+        h_mat = torch.diag(self.h[:M])
+
+        # Single Fock including both species
+        F = h_mat.clone()
+        total_rho = self.rho_n.clone()
+        if self.rho_p is not None:
+            total_rho += self.rho_p
+
+        # Contract two-body term
+        F += torch.einsum("acbd,dc->ab", self.V_tensor, total_rho)
+
+        # Hermitian symmetrization
+        F = 0.5 * (F + F.T)
+
+        return F
+
+
+
+
+def transform_integrals_full_unitary(U, h, V):
+    """
+    Transforms the one-body and two-body integrals using a single full-space unitary U.
     
-import torch
-import torch.nn as nn
+    Parameters
+    ----------
+    U : MxM unitary (torch.Tensor)
+        Maps new orbitals <- old orbitals.
+    h : MxM or M-vector (torch.Tensor)
+        One-body Hamiltonian.
+    V : MxMxMxM (torch.Tensor)
+        Two-body Hamiltonian (already antisymmetrized).
+
+    Returns
+    -------
+    h_p : MxM (torch.Tensor)
+        Transformed one-body Hamiltonian.
+    V_p : MxMxMxM (torch.Tensor)
+        Transformed two-body Hamiltonian.
+    """
+    # -----------------------
+    # 1-BODY ROTATION
+    # -----------------------
+    if h.ndim == 1:
+        h = torch.diag(h)
+    h_p = U @ h @ U.T.conj()
+
+    # -----------------------
+    # 2-BODY ROTATION
+    # -----------------------
+    # General rotation: V'_{pqrs} = sum_{abcd} U_{pa} U_{qb} V_{abcd} U*_{rc} U*_{sd}
+    V_p = torch.einsum("pa,qb,abcd,rc,sd->pqrs", U, U, V, U.conj(), U.conj())
+
+    # -----------------------
+    # No additional antisymmetrization if V is already antisymmetric
+    # -----------------------
+    Vbar_p = V_p
+
+    return h_p, Vbar_p
+
+
+
+
+def build_fock_matrix(h_mat, V_tensor, rho):
+    # F_ab = h_ab + sum_cd V_acbd * rho_dc
+    # here V_tensor shape (M,M,M,M), rho shape (M,M)
+    F = h_mat.copy()
+    M = h_mat.shape[0]
+    # einsum way (numpy)
+    F += 0.5*np.einsum("acbd,dc->ab", V_tensor, rho)
+    # ensure Hermitian
+    F = 0.5 * (F + F.T.conj())
+    return F
+
+
+
+# -------------------------
+# Transform integrals with unitary U_can
+# -------------------------
+def transform_integrals(U, h, V):
+    # U: full MxM unitary that maps new_alpha <- old_b  (i.e. a^dag_alpha = sum_b U[alpha,b] c^dag_b)
+    # transforms: h' = U @ h @ U^H
+    h_p = U @ h @ U.conj().T
+    # two-step contraction for V'_{pqrs} = sum_{abcd} U_{p a} U_{q b} V_{abcd} U*_{r c} U*_{s d}
+    # do in numpy with einsum (not memory optimized but fine for small M)
+    V_p = np.einsum("pa,qb,abcd,rc,sd->pqrs", U, U, V, U.conj(), U.conj())
+    # antisymmetrize if needed: Vbar_p = V_p - V_p.swapaxes(2,3)
+    Vbar_p = V_p - V_p.transpose(0,1,3,2)
+    return h_p, V_p, Vbar_p
+
 
 class HFEnergyFunctionalUnitary(nn.Module):
     def __init__(self, h_input, V_dict, num_particles, dtype=torch.float64, device=None, complex_dtype=False):
@@ -636,63 +794,3 @@ class HFEnergyFunctionalUnitary(nn.Module):
         self.rho = rho.detach()
 
         return E1 + E2
-
-
-def build_fock_matrices(self, rho_n, rho_p=None):
-    """
-    Builds neutron and proton Fock matrices.
-
-    rho_n: (M,M)
-    rho_p: (M,M) or None
-    V_tensor: (M,M,M,M)
-    h: (M,)
-    """
-
-    M = rho_n.shape[0]
-    h_mat = torch.diag(self.h[:M])
-
-    # --- Neutron Fock ---
-    F_n = h_mat.clone()
-
-    # nn term
-    F_n += torch.einsum("acbd,dc->ab", self.V_tensor, rho_n)
-
-    if rho_p is not None:
-        # np cross term
-        F_n += torch.einsum("acbd,dc->ab", self.V_tensor, rho_p)
-
-    # Hermitian symmetrization
-    F_n = 0.5 * (F_n + F_n.T)
-
-    # --- Proton Fock ---
-    if rho_p is not None:
-        F_p = h_mat.clone()
-
-        # pp term
-        F_p += torch.einsum("acbd,dc->ab", self.V_tensor, rho_p)
-
-        # pn cross term
-        F_p += torch.einsum("acbd,dc->ab", self.V_tensor, rho_n)
-
-        F_p = 0.5 * (F_p + F_p.T)
-
-        return F_n, F_p
-
-    return F_n
-
-
-
-
-# -------------------------
-# Transform integrals with unitary U_can
-# -------------------------
-def transform_integrals(U, h, V):
-    # U: full MxM unitary that maps new_alpha <- old_b  (i.e. a^dag_alpha = sum_b U[alpha,b] c^dag_b)
-    # transforms: h' = U @ h @ U^H
-    h_p = U @ h @ U.conj().T
-    # two-step contraction for V'_{pqrs} = sum_{abcd} U_{p a} U_{q b} V_{abcd} U*_{r c} U*_{s d}
-    # do in numpy with einsum (not memory optimized but fine for small M)
-    V_p = np.einsum("pa,qb,abcd,rc,sd->pqrs", U, U, V, U.conj(), U.conj())
-    # antisymmetrize if needed: Vbar_p = V_p - V_p.swapaxes(2,3)
-    Vbar_p = V_p - V_p.transpose(0,1,3,2)
-    return h_p, V_p, Vbar_p
