@@ -106,7 +106,7 @@ def gram_schmidt(V):
     return Q
 
 class HFEnergyFunctionalNuclear(nn.Module):
-    def __init__(self, h_vec, V_dict, num_neutrons, num_protons, neutron_indices, proton_indices):
+    def __init__(self, h_vec, V_dict, num_neutrons, num_protons, neutron_indices, proton_indices,m_values:np.ndarray=None,multiplier_m_values:Optional[float]=0.):
         """
         Initializes the Hartree-Fock energy functional for a nuclear system with neutrons and protons.
         
@@ -140,6 +140,13 @@ class HFEnergyFunctionalNuclear(nn.Module):
         if num_protons!=0:
             self.A_p = nn.Parameter(torch.randn(self.proton_idx, self.Np,dtype=h_vec.dtype))
 
+
+        # constrain for M=0
+        if m_values is not None:
+            self.m_tensor=torch.tensor(m_values,dtype=h_vec.dtype)
+            self.multiplier_m_values=multiplier_m_values
+        else:
+            self.m_tensor=None
     def forward(self):
         # get local orthonormal orbitals for neutrons and protons
         C_n_local, _ = torch.linalg.qr(self.A_n)
@@ -170,18 +177,26 @@ class HFEnergyFunctionalNuclear(nn.Module):
             torch.einsum('abcd,ca,db->', self.V_tensor, self.rho_n, self.rho_p)
             )
             self.C_p=C_p.clone()
-        
+            
+            if self.m_tensor is not None:
+                E_constrain=self.multiplier_m_values*(torch.sum(self.rho_n*self.m_tensor)**2+torch.sum(self.rho_p*self.m_tensor)**2)
+            else:
+                E_constrain=0.
         # compute energy in case of only neutrons
         else:
             E1 = torch.dot(self.h[:self.M//2], torch.diagonal(self.rho_n ))
             E2 = (
             0.5 * torch.einsum('abcd,ca,db->', self.V_tensor, self.rho_n, self.rho_n) 
             )
+            if self.m_tensor is not None:
+                E_constrain=self.multiplier_m_values*(torch.sum(self.rho_n*self.m_tensor)**2)
+            else:
+                E_constrain=0.
             
         self.C_n=C_n.clone()        
 
-        
-        return E1 + E2
+        print(f"E1: {E1.item()}, E2: {E2.item()}, E_constrain: {E_constrain.item()}")
+        return E1 + E2 + E_constrain
 
 
     def build_mixed_fock_matrix(self):
@@ -238,42 +253,25 @@ class HFEnergyFunctionalNuclear(nn.Module):
         return F_n[:M//2, :M//2], F_p[M//2:, M//2:] if F_p is not None else None
 
 
-
-
-
-def transform_integrals_full_unitary(U, h, V):
-    """
-    Transforms the one-body and two-body integrals using a single full-space unitary U.
-    
-    Parameters
-    ----------
-    U : MxM unitary (torch.Tensor)
-        Maps new orbitals <- old orbitals.
-    h : MxM or M-vector (torch.Tensor)
-        One-body Hamiltonian.
-    V : MxMxMxM (torch.Tensor)
-        Two-body Hamiltonian (already antisymmetrized).
-
-    Returns
-    -------
-    h_p : MxM (torch.Tensor)
-        Transformed one-body Hamiltonian.
-    V_p : MxMxMxM (torch.Tensor)
-        Transformed two-body Hamiltonian.
-    """
-    # -----------------------
-    # 1-BODY ROTATION
-    # -----------------------
-    if h.ndim == 1:
-        h = torch.diag(h)
-    h_p = U @ h @ U.T.conj()
-
-    # -----------------------
-    # 2-BODY ROTATION
-    # -----------------------
-    # General rotation: V'_{pqrs} = sum_{abcd} U_{pa} U_{qb} V_{abcd} U*_{rc} U*_{sd}
-    V_p = torch.einsum("pa,qb,abcd,rc,sd->pqrs", U, U, V, U.conj(), U.conj())
-    return h_p, V_p
+    # -------------------------
+    # Transform integrals with unitary U_can
+    # -------------------------
+    def transform_integrals_using_fock_rotation(self,U, h, V):
+        """
+        Transforms one-body and two-body integrals using a unitary transformation U that describes the fock rotation.
+        
+        :param U: The fock rotation unitary (MxM) as a numpy matrix
+        :param h: single particle energy matrix (MxM) as a numpy matrix
+        :param V: two-body interaction tensor (MxMxMxM) as a numpy array
+        :return: transformed one-body Hamiltonian h_p (MxM), two-body Hamiltonian V_p (MxMxMxM)
+        """
+        # U: full MxM unitary that maps new_alpha <- old_b  (i.e. a^dag_alpha = sum_b U[alpha,b] c^dag_b)
+        # transforms: h' = U @ h @ U^H
+        h_p = U @ h @ U.conj().T
+        # two-step contraction for V'_{pqrs} = sum_{abcd} U_{p a} U_{q b} V_{abcd} U*_{r c} U*_{s d}
+        # do in numpy with einsum (not memory optimized but fine for small M)
+        V_p = np.einsum("pa,qb,abcd,rc,sd->pqrs", U, U, V, U.conj(), U.conj())
+        return h_p, V_p
 
 
 
@@ -296,28 +294,3 @@ def build_fock_matrix(h_mat, V_tensor, rho):
     # ensure Hermitian
     F = 0.5 * (F + F.T.conj())
     return F
-
-
-
-# -------------------------
-# Transform integrals with unitary U_can
-# -------------------------
-def transform_integrals_using_fock_rotation(U, h, V):
-    """
-    Transforms one-body and two-body integrals using a unitary transformation U that describes the fock rotation.
-    
-    :param U: The fock rotation unitary (MxM) as a numpy matrix
-    :param h: single particle energy matrix (MxM) as a numpy matrix
-    :param V: two-body interaction tensor (MxMxMxM) as a numpy array
-    :return: transformed one-body Hamiltonian h_p (MxM), two-body Hamiltonian V_p (MxMxMxM)
-    """
-    # U: full MxM unitary that maps new_alpha <- old_b  (i.e. a^dag_alpha = sum_b U[alpha,b] c^dag_b)
-    # transforms: h' = U @ h @ U^H
-    h_p = U @ h @ U.conj().T
-    # two-step contraction for V'_{pqrs} = sum_{abcd} U_{p a} U_{q b} V_{abcd} U*_{r c} U*_{s d}
-    # do in numpy with einsum (not memory optimized but fine for small M)
-    V_p = np.einsum("pa,qb,abcd,rc,sd->pqrs", U, U, V, U.conj(), U.conj())
-    return h_p, V_p
-
-
-    
