@@ -270,7 +270,7 @@ class HFEnergyFunctionalNuclear(nn.Module):
         h_p = U @ h @ U.conj().T
         # two-step contraction for V'_{pqrs} = sum_{abcd} U_{p a} U_{q b} V_{abcd} U*_{r c} U*_{s d}
         # do in numpy with einsum (not memory optimized but fine for small M)
-        V_p = np.einsum("pa,qb,abcd,rc,sd->pqrs", U, U, V, U.conj(), U.conj())
+        V_p = torch.einsum("pa,qb,abcd,rc,sd->pqrs", U, U, V, U.conj(), U.conj())
         return h_p, V_p
 
 
