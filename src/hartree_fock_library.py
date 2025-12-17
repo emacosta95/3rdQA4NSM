@@ -189,7 +189,7 @@ class HFEnergyFunctionalNuclear(nn.Module):
             0.5 * torch.einsum('abcd,ca,db->', self.V_tensor, self.rho_n, self.rho_n) 
             )
             if self.m_tensor is not None:
-                E_constrain=self.multiplier_m_values*(torch.sum(self.rho_n*self.m_tensor)**2)
+                E_constrain=self.multiplier_m_values*(torch.sum(self.rho_n*self.m_tensor[:self.rho_n.shape[0]])**2)
             else:
                 E_constrain=0.
             
