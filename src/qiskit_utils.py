@@ -79,7 +79,7 @@ def obtain_frequencies_qiskit(results, shots):
     return frequencies
 
 
-def compute_energy(frequencies, t_onebody,renormalization_factor=None):
+def compute_energy(frequencies, t_onebody,n_qubits,renormalization_factor=None):
     energy_component_z = 0.
     energy_component_y = 0.
     energy_component_x = 0.
@@ -88,24 +88,27 @@ def compute_energy(frequencies, t_onebody,renormalization_factor=None):
         if i != j:    
             freq = frequencies['Y']
             for key in freq.keys():
-                energy_component_y += 0.25 * value * key[i] * key[j] * freq[key]
+                energy_component_y += 0.25 * value * key[n_qubits-1-i] * key[n_qubits-1-j] * freq[key]
                 
 
             freq = frequencies['X']
             for key in freq.keys():
-                energy_component_x += 0.25 * value * key[i] * key[j] * freq[key]        
+                energy_component_x += 0.25 * value * key[n_qubits-1-i] * key[n_qubits-1-j] * freq[key]        
 
         
         elif i == j:
             # convert projector from Z+I to I-Z
             freq = frequencies['Z']
             for key in freq.keys():
-                energy_component_z += 0.5 * value * (key[i] + 1) * freq[key]
+                energy_component_z += 0.5 * value * (key[n_qubits-1-i] + 1) * freq[key]
     
     # we add this renormalization factor to perform an approximate restoration of the symmetry sector
+    print(energy_component_x,energy_component_y,energy_component_z)
     if renormalization_factor is not None:
+        print('bla bla')
         energy_component_y /=  renormalization_factor
         energy_component_x /=  renormalization_factor
 
+    print(energy_component_x,energy_component_y,energy_component_z)
 
     return energy_component_x + energy_component_y + energy_component_z
