@@ -4,6 +4,7 @@ from qiskit.quantum_info import SparsePauliOp
 from qiskit import QuantumCircuit
 from qiskit.quantum_info import SparsePauliOp
 from typing import Dict
+from qiskit import transpile
 
 
 
@@ -34,3 +35,77 @@ def get_hamiltonian(t_onebody:Dict, n_sites:int):
     # `from_sparse_list`, and multiply by the interaction term.
     hamiltonian = SparsePauliOp.from_sparse_list([*XX_tuples, *YY_tuples,*Z_tuples,*I_tuples], num_qubits=n_sites)
     return hamiltonian.simplify()
+
+
+
+def get_shots_qiskit(circuit_x, circuit_y, circuit_z, shots=1000,backend=None):
+
+    circuits = {
+        "X": circuit_x,
+        "Y": circuit_y,
+        "Z": circuit_z
+    }
+
+    results = {}
+
+    for basis, qc in circuits.items():
+        # circuits should be already transpiled for the backend
+        job = backend.run(qc, shots=shots)
+        result = job.result()
+        counts = result.get_counts()
+        results[basis] = counts
+        print(f"Results for basis {basis}: {counts}")
+    return results
+
+
+def obtain_frequencies_qiskit(results, shots):
+    frequencies = {}
+    labels = ['X', 'Y', 'Z']
+
+    for label in labels:
+        counts = results[label]   # Qiskit counts: {'010': 123, ...}
+
+        bitstrings = list(counts.keys())
+        values = list(counts.values())
+        measures = {}
+
+        for i in range(len(bitstrings)):
+            # Convert '0','1' → eigenvalues -1,+1
+            arr = np.array([2*(int(b) - 0.5) for b in bitstrings[i]])
+            measures[tuple(arr)] = values[i] / shots
+
+        frequencies[label] = measures
+
+    return frequencies
+
+
+def compute_energy(frequencies, t_onebody,renormalization_factor=None):
+    energy_component_z = 0.
+    energy_component_y = 0.
+    energy_component_x = 0.
+
+    for (i, j), value in t_onebody.items():
+        if i != j:    
+            freq = frequencies['Y']
+            for key in freq.keys():
+                energy_component_y += 0.25 * value * key[i] * key[j] * freq[key]
+                
+
+            freq = frequencies['X']
+            for key in freq.keys():
+                energy_component_x += 0.25 * value * key[i] * key[j] * freq[key]        
+
+        
+        elif i == j:
+            # convert projector from Z+I to I-Z
+            freq = frequencies['Z']
+            for key in freq.keys():
+                energy_component_z += 0.5 * value * (key[i] + 1) * freq[key]
+    
+    # we add this renormalization factor to perform an approximate restoration of the symmetry sector
+    if renormalization_factor is not None:
+        energy_component_y /=  renormalization_factor
+        energy_component_x /=  renormalization_factor
+
+
+    return energy_component_x + energy_component_y + energy_component_z
