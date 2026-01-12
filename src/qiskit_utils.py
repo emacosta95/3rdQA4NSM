@@ -78,7 +78,7 @@ def obtain_frequencies_qiskit(results, shots):
 
     return frequencies
 
-
+# Deprecated function
 def compute_energy(frequencies, t_onebody,n_qubits,renormalization_factor=None):
     energy_component_z = 0.
     energy_component_y = 0.
@@ -112,3 +112,94 @@ def compute_energy(frequencies, t_onebody,n_qubits,renormalization_factor=None):
     print(energy_component_x,energy_component_y,energy_component_z)
 
     return energy_component_x + energy_component_y + energy_component_z
+
+
+def expectation_from_counts(counts, pauli,p_sector=None):
+    """
+    Compute ⟨P⟩ from measurement counts in the correct basis.
+    
+    counts: dict like {'010': 120, '111': 880}
+    pauli: string like 'IXZ'
+    """
+    shots = sum(counts.values())
+    exp = 0.0
+    # since the bitstring are in 1,0 we use the parity to get the +1,-1 counting
+    for bitstring, c in counts.items():
+        # something that we were missing from our previous implementation
+        parity = 0 # we start with 1 as eigenvalue
+        for i, p in enumerate(pauli):
+            if p != 'I': # if p is not identity we get a X,Y,Z operator with eigenvalues +1, -1. 
+                if bitstring[i] == '1': # if the state related to the operator is 1 we flip the eigenvalue such that it becomes -1
+                    parity ^= 1
+                    # in qiskit the -1 eigenvalue is represented by the bit 1 (they are weird)
+        exp += ((-1) ** parity) * c / shots
+        if p_sector is not None:
+            exp /= p_sector
+    return exp
+
+
+
+def ionq_energy_expectation(circuits, hamiltonian, backend, shots=1000,nparticle_sector=None):
+    """
+    Compute ⟨H⟩ on IonQ backend using X/Y/Z basis circuits.
+
+    circuits: [circuit_x, circuit_y, circuit_z]
+    hamiltonian: SparsePauliOp
+    backend: IonQ backend (simulator or hardware)
+    shots: number of shots
+    """
+    
+    circuit_x, circuit_y, circuit_z = circuits
+    
+
+
+    # Run
+    job_x = backend.run(circuit_x, shots=shots)
+    job_y = backend.run(circuit_y, shots=shots)
+    job_z = backend.run(circuit_z, shots=shots)
+
+    result_x = job_x.result()
+    result_y = job_y.result()
+    result_z = job_z.result()
+
+    counts_x = result_x.get_counts()
+    counts_y = result_y.get_counts()
+    counts_z = result_z.get_counts()
+    
+    # we add the option of restricting the Symmetry sector by renormalizing the energy components in X and Y
+    p_sector=None
+    if nparticle_sector is not None:
+        filtered_counts_z={b: c for b, c in counts_z.items() if b.count('1') == nparticle_sector}
+        p_sector=sum(filtered_counts_z.values())/shots
+        counts_z=filtered_counts_z.copy()
+    
+    energy_z = 0.0
+    energy_xy = 0.0
+    for pauli, coeff in zip(hamiltonian.paulis.to_labels(), hamiltonian.coeffs):
+        coeff = coeff.real
+
+        # Identity term
+        if set(pauli) == {'I'}:
+            energy_z += coeff
+            continue
+
+            
+        # Determine which basis this Pauli string needs
+        if all(p in ['I', 'Z'] for p in pauli):
+            exp_val = expectation_from_counts(counts_z, pauli)
+            energy_z += coeff * exp_val
+
+        elif all(p in ['I', 'X'] for p in pauli):
+            exp_val = expectation_from_counts(counts_x, pauli,p_sector=p_sector)
+            energy_xy += coeff * exp_val
+
+        elif all(p in ['I', 'Y'] for p in pauli):
+            exp_val = expectation_from_counts(counts_y, pauli,p_sector=p_sector)
+            energy_xy += coeff * exp_val
+        else:
+            raise ValueError(
+                f"Pauli term {pauli} mixes X/Y/Z. "
+                "This simple implementation assumes separate X, Y, Z groups."
+            )
+
+    return energy_z+energy_xy,energy_z,energy_xy
