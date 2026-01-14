@@ -114,7 +114,7 @@ def compute_energy(frequencies, t_onebody,n_qubits,renormalization_factor=None):
     return energy_component_x + energy_component_y + energy_component_z
 
 
-def expectation_from_counts(counts, pauli,p_sector=None):
+def expectation_from_counts(counts, pauli):
     """
     Compute ⟨P⟩ from measurement counts in the correct basis.
     
@@ -133,8 +133,7 @@ def expectation_from_counts(counts, pauli,p_sector=None):
                     parity ^= 1
                     # in qiskit the -1 eigenvalue is represented by the bit 1 (they are weird)
         exp += ((-1) ** parity) * c / shots
-        if p_sector is not None:
-            exp /= p_sector
+
     return exp
 
 
@@ -172,7 +171,6 @@ def ionq_energy_expectation(circuits, hamiltonian, backend, shots=1000,nparticle
         filtered_counts_z={b: c for b, c in counts_z.items() if b.count('1') == nparticle_sector}
         p_sector=sum(filtered_counts_z.values())/shots
         counts_z=filtered_counts_z.copy()
-    
     energy_z = 0.0
     energy_xy = 0.0
     for pauli, coeff in zip(hamiltonian.paulis.to_labels(), hamiltonian.coeffs):
@@ -190,11 +188,11 @@ def ionq_energy_expectation(circuits, hamiltonian, backend, shots=1000,nparticle
             energy_z += coeff * exp_val
 
         elif all(p in ['I', 'X'] for p in pauli):
-            exp_val = expectation_from_counts(counts_x, pauli,p_sector=p_sector)
+            exp_val = expectation_from_counts(counts_x, pauli)
             energy_xy += coeff * exp_val
 
         elif all(p in ['I', 'Y'] for p in pauli):
-            exp_val = expectation_from_counts(counts_y, pauli,p_sector=p_sector)
+            exp_val = expectation_from_counts(counts_y, pauli)
             energy_xy += coeff * exp_val
         else:
             raise ValueError(
@@ -202,4 +200,10 @@ def ionq_energy_expectation(circuits, hamiltonian, backend, shots=1000,nparticle
                 "This simple implementation assumes separate X, Y, Z groups."
             )
 
-    return energy_z+energy_xy,energy_z,energy_xy
+    if p_sector is not None:
+        energy_xy_renormalized =energy_xy/ p_sector
+
+        return energy_z,energy_xy,energy_xy_renormalized, p_sector
+
+    else:
+        return energy_z+energy_xy,energy_z,energy_xy
