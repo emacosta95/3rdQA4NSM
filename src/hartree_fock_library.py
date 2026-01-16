@@ -273,7 +273,55 @@ class HFEnergyFunctionalNuclear(nn.Module):
         V_p = torch.einsum("pa,qb,abcd,rc,sd->pqrs", U, U, V, U.conj(), U.conj())
         return h_p, V_p
 
+    def hf_component_from_indices(self, occ_idx, species: str = "neutron"):
+        """
+        Compute <S|HF> for a Slater determinant |S> specified by occupied indices.
 
+        Parameters
+        ----------
+        occ_idx : list, tuple, or 1D torch.Tensor
+            Indices of occupied single-particle orbitals, e.g. [2, 3].
+        species : str
+            "neutron" or "proton".
+
+        Returns
+        -------
+        amp : torch.Tensor
+            Scalar HF amplitude <S|HF>.
+        """
+
+        # Select correct orbital matrix
+        if species == "neutron":
+            C = self.C_n
+            N = self.Nn
+        elif species == "proton":
+            if self.Np == 0:
+                raise ValueError("No protons in this system.")
+            C = self.C_p
+            N = self.Np
+        else:
+            raise ValueError("species must be 'neutron' or 'proton'")
+
+        if C is None:
+            raise RuntimeError("Call forward() first to build HF orbitals.")
+
+        # Convert indices to tensor
+        occ_idx = torch.as_tensor(occ_idx, dtype=torch.long, device=C.device)
+
+        # Check particle number
+        # if occ_idx.numel() != N:
+        #     raise ValueError(
+        #         f"Provided {occ_idx.numel()} occupied indices, "
+        #         f"but HF state has {N} {species}s."
+        #     )
+
+        # Build the Slater submatrix: rows = occupied basis orbitals, columns = HF orbitals
+        C_sub = C[occ_idx, :len(occ_idx)]   # shape (N, N)
+
+        # Determinant gives the amplitude <S|HF>
+        amp = torch.det(C_sub)
+
+        return amp
 
 
 def build_fock_matrix(h_mat, V_tensor, rho):
