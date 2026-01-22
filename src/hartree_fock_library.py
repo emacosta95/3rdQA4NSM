@@ -106,7 +106,7 @@ def gram_schmidt(V):
     return Q
 
 class HFEnergyFunctionalNuclear(nn.Module):
-    def __init__(self, h_vec, V_dict, num_neutrons, num_protons, neutron_indices, proton_indices,m_values:np.ndarray=None,multiplier_m_values:Optional[float]=0.):
+    def __init__(self, h_vec, V_dict, num_neutrons, num_protons, neutron_indices, proton_indices,m_values:np.ndarray=None,multiplier_m_values:Optional[float]=0.,neutron_initialization=None,proton_initialization=None):
         """
         Initializes the Hartree-Fock energy functional for a nuclear system with neutrons and protons.
         
@@ -135,11 +135,24 @@ class HFEnergyFunctionalNuclear(nn.Module):
             for (a, b, c, d), val in V_dict.items():
                 if  a<self.M//2 and b<self.M//2 and c<self.M//2  and d<self.M//2: 
                     self.V_tensor[a, b, c, d] = val
-        self.A_n = nn.Parameter(torch.randn(self.proton_idx, self.Nn,dtype=h_vec.dtype))
+        
+        # random initialization
+        if neutron_initialization is None:
+            self.A_n = nn.Parameter(torch.randn(self.proton_idx, self.Nn,dtype=h_vec.dtype))
+        else:    
+            A_n_init = neutron_initialization
+            self.A_n = nn.Parameter(A_n_init)
+        
+        
+        
         # generate A_p only if there are protons
         if num_protons!=0:
-            self.A_p = nn.Parameter(torch.randn(self.proton_idx, self.Np,dtype=h_vec.dtype))
-
+            # random initialization
+            if proton_initialization is None:
+                self.A_p = nn.Parameter(torch.randn(self.proton_idx, self.Np,dtype=h_vec.dtype))
+            else:
+                A_p_init = proton_initialization
+                self.A_p = nn.Parameter(A_p_init)   
 
         # constrain for M=0
         if m_values is not None:
