@@ -14,7 +14,7 @@ from NSMFermions.utils_quasiparticle_approximation import QuasiParticlesConverte
 from scipy.sparse.linalg import eigsh
 
 
-def full_brillouin_wigner_method(hamiltonians,threshold,eigvals_aci,nstep_iteration):
+def full_brillouin_wigner_method(hamiltonians,threshold,eigvals_aci,nsteps_iteration):
     """Apply the Brillouin-Wigner method using the set of hamiltonians considered
 
     Args:
@@ -31,7 +31,7 @@ def full_brillouin_wigner_method(hamiltonians,threshold,eigvals_aci,nstep_iterat
         delta_hamiltonian (np.ndarray): contribution of all the corrections in the H_QQ.
     """
     target_eigenvalue=0
-    nsteps_iteration=100
+
     
     hamiltonian_qq=hamiltonians[0]
     hamiltonian_qr=hamiltonians[1]
@@ -92,7 +92,7 @@ def full_brillouin_wigner_method(hamiltonians,threshold,eigvals_aci,nstep_iterat
     return psiq_orderi,e,hamiltonian_tot_qq_full_bw,infidelities_full_brillouinwigner_method,history_errors_full_brillouinwigner_method,delta_hamiltonian
 
 
-def full_brillouin_wigner_method_pauliblockade(hamiltonians,threshold,eigvals_aci,nstep_iteration):
+def full_brillouin_wigner_method_pauliblockade(hamiltonians,threshold,eigvals_aci,nsteps_iteration):
     """Apply the truncated Brillouin-Wigner method using the set of hamiltonians considered
 
     Args:
@@ -109,7 +109,6 @@ def full_brillouin_wigner_method_pauliblockade(hamiltonians,threshold,eigvals_ac
         delta_hamiltonian (np.ndarray): contribution of all the corrections in the H_QQ.
     """
     target_eigenvalue=0
-    nsteps_iteration=100
     
     hamiltonian_qq=hamiltonians[0]
     hamiltonian_qr_pauliblockade=hamiltonians[1]
@@ -215,7 +214,6 @@ def brillouin_wigner_method_hf_ansatz(hamiltonians_hf,hamiltonian_qq,density_mat
     
         
     # then we compute the energy corrections as in all the previous cases
-    tot_hamiltonian=hamiltonian_qq_2b
     values,psiq_order0=eigsh(hamiltonian_qq_2b,k=1)
     e=values[0]
     approximations_as_dictionary=[]

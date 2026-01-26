@@ -208,7 +208,6 @@ class HFEnergyFunctionalNuclear(nn.Module):
             
         self.C_n=C_n.clone()        
 
-        print(f"E1: {E1.item()}, E2: {E2.item()}, E_constrain: {E_constrain.item()}")
         return E1 + E2 + E_constrain
 
 
