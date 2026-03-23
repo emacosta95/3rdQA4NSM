@@ -1,4 +1,4 @@
-# 3rdQA4NSM — Third-order Quasiparticle Approximation for the Nuclear Shell Model
+# 3rdQA4NSM — Brillouin Wigner method for the Quasiparticle Nuclear Shell Model
 
 > **Brillouin-Wigner perturbation theory for quasiparticle effective Hamiltonians in the sd-shell**
 
