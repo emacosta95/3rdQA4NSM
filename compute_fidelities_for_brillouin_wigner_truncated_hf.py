@@ -13,7 +13,7 @@ from scipy.sparse.linalg import eigsh,expm_multiply
 from tqdm import trange,tqdm
 import matplotlib.pyplot as plt
 from NSMFermions.utils_quasiparticle_approximation import QuasiParticlesConverter,HardcoreBosonsBasis,QuasiParticlesConverterOnlynnpp
-from src.brillouin_wigner_utils import full_brillouin_wigner_method,computation_pauli_blockade,full_brillouin_wigner_method_pauliblockade,brillouin_wigner_method_hf_ansatz,full_brillouin_wigner_1storder
+from src.brillouin_wigner_utils import full_brillouin_wigner_method,computation_pauli_blockade,full_brillouin_wigner_method_pauliblockade,brillouin_wigner_method_hf_ansatz,full_brillouin_wigner_1storder,full_brillouin_wigner_method_pauliblockade_hf
 from scipy.sparse import lil_matrix
 from NSMFermions.utils_quasiparticle_approximation import HardcoreBosonsBasis
 from scipy.sparse.linalg import norm
@@ -49,12 +49,6 @@ states_fbw=[]
 hamiltonians_fbw=[]
 energies_fbw=[]
 
-# bw method 1st order
-accuracies_1st=[]
-states_1st=[]
-hamiltonians_1st=[]
-energies_1st=[]
-
 
 # truncated bw method
 energies_truncated_bw=[]
@@ -62,11 +56,6 @@ fidelities_truncated_bw=[]
 operator_fidelities_bw=[]
 
 
-# hf bw method
-energies_hf_bw=[]
-fidelities_hf_bw=[]
-accuracies_hfbw=[]
-operator_fidelities_hfbw=[]
 
 
 for index_run,nparts in enumerate(nparticles):
@@ -122,12 +111,7 @@ for index_run,nparts in enumerate(nparticles):
     energies_fbw.append(energy_fbw)
     accuracies_fbw.append(list_errors_fbw)
     
-    #### compute the full brillouin-wigner method at the first order
-    psiq_1st,energy_1st,hamiltonian_1st,list_infedelities_1st,list_errors_1st,_=full_brillouin_wigner_1storder([hamiltonian_qq,hamiltonian_qr,hamiltonian_rq,hamiltonian_rr],threshold=10**-3,eigvals_aci=eigvals_aci,nsteps_iteration=nsteps_iteration)
-    states_1st.append(psiq_1st)
-    hamiltonians_1st.append(hamiltonian_1st)
-    energies_1st.append(energy_1st)
-    accuracies_1st.append(list_errors_1st)
+    
     
     
     #### compute the truncated brillouin-wigner method
@@ -171,7 +155,78 @@ for index_run,nparts in enumerate(nparticles):
     sp_density[:size_a]=(nparticles_a-1)/(size_a)
     # and proton
     sp_density[size_a:]=(nparticles_b-1)/(size_b)
+
+    ###################################################################### HFHFHFHFHFHFHFHFHFHFH
+    # we initialize the Hartree-Fock model as a pytorch module
     
+        # fix the seed for the initialization of the HF coefficients
+    seed = 42
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+
+    # compute the m_values for the symmetry restirction of the HF method
+    # we compute the m values array
+    m_values=[]
+    for sp in SPS.state_encoding:
+        n,l,j,m,t,tz=sp
+        m_values.append(m)
+
+    m_values=np.array(m_values)
+    
+    
+    model_twobody=HFEnergyFunctionalNuclear(h_vec=torch.tensor(SPS.energies,dtype=torch.double),V_dict=twobody_matrix,num_neutrons=2,num_protons=2,neutron_indices=0,proton_indices=size_a,m_values=m_values,multiplier_m_values=0)
+    # initialize the optimizer
+    optimizer = optim.Adam(model_twobody.parameters(), lr=0.01)
+    
+    
+    
+    # training loop
+    num_steps = 600
+    # to get more info about this just go to the pytorch documentation
+    for step in range(num_steps):
+        optimizer.zero_grad()
+        energy_twobody = model_twobody()  # calls forward()
+        energy_twobody.backward()
+        optimizer.step()
+
+        if step % 20 == 0 or step == num_steps - 1:
+            # see how it goes
+            print(f"Step {step:4d} | Energy = {energy_twobody.item():.6f}")
+
+
+    
+    # we compute the HF wavefunction in the 2-2 particle sector
+    psi_hf=np.zeros(Hamiltonian2bodysector.basis.shape[0])
+    # run over the basis element
+    for idx_rb,rb in enumerate(Hamiltonian2bodysector.basis):
+        occ_idx=np.nonzero(rb)[0]
+        proton_idxs=occ_idx[occ_idx >= size_a]
+        neutron_idxs=occ_idx[occ_idx < size_a]
+        # compute the minors
+        phi_neutron=model_twobody.hf_component_from_indices(occ_idx=neutron_idxs,species='neutron')
+        # compute the minors
+        phi_proton=model_twobody.hf_component_from_indices(occ_idx=proton_idxs,species='proton')
+        # get the component
+        psi_hf[idx_rb]=phi_neutron*phi_proton
+    # normalization factor
+    psi_hf=psi_hf/np.linalg.norm(psi_hf)
+    # we normalize it
+    psi_hf=QPC2body.particles2restofstates @ psi_hf
+    psi_hf/=np.linalg.norm(psi_hf)
+    psi_hf_rr=psi_hf
+    # get the density matrix, necessary for the BW-HF method
+    density_matrix_rr = csr_matrix(np.einsum('a,b->ab',psi_hf_rr,psi_hf_rr.conj()))
+    # reduce the density matrix to the R space, with rho_RR
+    #density_matrix_rr=QPC2body.particles2restofstates @ density_matrix @ QPC2body.particles2restofstates.T
+
+    energy_hf=psi_hf_rr.conj() @ hamiltonian_rr_2b @ psi_hf_rr
+    print('ENERGY HF OF H_RR=',energy_hf,'\n')
+
+    hamiltonian_rr_2b_hf=energy_hf*identity(QPC2body.rest_basis.shape[0])
+    
+
+
     #### we compute the 2 qbody H_RQ taking into account the pauli blocking.
     # we initialize it creating the lil_matrix
     hamiltonian_qr_2b_pauliblockade=lil_matrix((QPC2body.quasiparticle_basis.shape[0],QPC2body.rest_basis.shape[0]))
@@ -227,7 +282,7 @@ for index_run,nparts in enumerate(nparticles):
                 hamiltonian_rr_masked[index_restbasis_a,index_restbasis_b]=constrain*hamiltonian_rr_2b[index_restbasis_a,index_restbasis_b].copy()
                 
     #### compute the truncated brillouin-wigner method 
-    _,_,_,_,_,delta_hamiltonian=full_brillouin_wigner_method_pauliblockade([hamiltonian_qq_2b,hamiltonian_qr_2b_pauliblockade,hamiltonian_qr_2b,hamiltonian_rq_2b_pauliblockade,hamiltonian_rr_2b,hamiltonian_rr_masked],threshold=10**-3,eigvals_aci=eigvals_aci,nsteps_iteration=nsteps_iteration,pauli_blockade_on=True)
+    _,_,_,_,_,delta_hamiltonian=full_brillouin_wigner_method_pauliblockade_hf([hamiltonian_qq_2b,hamiltonian_qr_2b_pauliblockade,hamiltonian_qr_2b,hamiltonian_rq_2b_pauliblockade,hamiltonian_rr_2b,hamiltonian_rr_masked],density_matrix_rr=density_matrix_rr,threshold=10**-3,eigvals_aci=eigvals_aci,nsteps_iteration=nsteps_iteration,pauli_blockade_on=False)
     
     # extract the two body transitions of the \Delta H_QQ
     twobody_quasiparticle_effective_interaction={}
@@ -262,7 +317,7 @@ for index_run,nparts in enumerate(nparticles):
     e=values[0]
     psiq_truncated=psiq_truncated[:,0]
     print(e)
-    print('Energy error of the truncated BW method=',np.abs((e-eigvals_aci[0])/eigvals_aci[0]),'\n')
+    print('Energy error of the truncated HF-BW method=',np.abs((e-eigvals_aci[0])/eigvals_aci[0]),'\n')
     
     fidelity=np.abs(np.vdot(psiq_fbw,psiq_truncated))**2
     fidelities_truncated_bw.append(fidelity)
@@ -292,109 +347,6 @@ for index_run,nparts in enumerate(nparticles):
     m_values=np.array(m_values)
 
     
-    # Extract the HF energy of the system ###########################
-    
-    # we initialize the Hartree-Fock model as a pytorch module
-    model=HFEnergyFunctionalNuclear(h_vec=torch.tensor(SPS.energies,dtype=torch.double),V_dict=twobody_matrix,num_neutrons=nparticles_a,num_protons=nparticles_b,neutron_indices=0,proton_indices=size_a,m_values=m_values,multiplier_m_values=0)
-    # initialize the optimizer
-    optimizer = optim.Adam(model.parameters(), lr=0.01)
-
-    # training loop
-    num_steps = 600
-    # to get more info about this just go to the pytorch documentation
-    for step in range(num_steps):
-        optimizer.zero_grad()
-        energy = model()  # calls forward()
-        energy.backward()
-        optimizer.step()
-
-        if step % 20 == 0 or step == num_steps - 1:
-            # see how it goes
-            print(f"Step {step:4d} | Energy = {energy.item():.6f}")
-            
-    energy_hf=energy.item()
-    # we compute the HF wavefunction to get expectation <PSI_HF|H_RR|PSI_HF> in the full sector, necessary for the BW-HF method
-    psi_hf=np.zeros(NSMHamiltonian.basis.shape[0])
-    # run over the basis element
-    for idx_rb,rb in enumerate(NSMHamiltonian.basis):
-        occ_idx=np.nonzero(rb)[0]
-        proton_idxs=occ_idx[occ_idx >= size_a]
-        neutron_idxs=occ_idx[occ_idx < size_a]
-        # compute the minors
-        phi_neutron=model.hf_component_from_indices(occ_idx=neutron_idxs,species='neutron').detach().numpy()
-        # compute the minors
-        phi_proton=model.hf_component_from_indices(occ_idx=proton_idxs,species='proton').detach().numpy()
-        # get the component
-        psi_hf[idx_rb]=phi_neutron*phi_proton
-    # normalization factor
-    psi_hf=psi_hf/np.linalg.norm(psi_hf)
-
-    psi_hf_rr=QPC.particles2restofstates @ psi_hf
-    psi_hf_rr/=np.linalg.norm(psi_hf_rr)
-    # we get hf energy
-    energy_hf=psi_hf_rr.conj() @ hamiltonian_rr @ psi_hf_rr
-    print('ENERGY HF OF H_RR=',energy_hf,'\n')
-
-
-    
-    # Extract the orbitals for computing the density matrix in the rest space of the 2 quasiparticle sector
-    ###############################################################
-    
-    # we initialize the Hartree-Fock model as a pytorch module
-    model_twobody=HFEnergyFunctionalNuclear(h_vec=torch.tensor(SPS.energies,dtype=torch.double),V_dict=twobody_matrix,num_neutrons=2,num_protons=2,neutron_indices=0,proton_indices=size_a,m_values=m_values,multiplier_m_values=0)
-    # initialize the optimizer
-    optimizer = optim.Adam(model_twobody.parameters(), lr=0.01)
-    
-    # training loop
-    num_steps = 600
-    # to get more info about this just go to the pytorch documentation
-    for step in range(num_steps):
-        optimizer.zero_grad()
-        energy_twobody = model_twobody()  # calls forward()
-        energy_twobody.backward()
-        optimizer.step()
-
-        if step % 20 == 0 or step == num_steps - 1:
-            # see how it goes
-            print(f"Step {step:4d} | Energy = {energy_twobody.item():.6f}")
-
-
-    
-    # we compute the HF wavefunction in the 2-2 particle sector
-    psi_hf=np.zeros(Hamiltonian2bodysector.basis.shape[0])
-    # run over the basis element
-    for idx_rb,rb in enumerate(Hamiltonian2bodysector.basis):
-        occ_idx=np.nonzero(rb)[0]
-        proton_idxs=occ_idx[occ_idx >= size_a]
-        neutron_idxs=occ_idx[occ_idx < size_a]
-        # compute the minors
-        phi_neutron=model_twobody.hf_component_from_indices(occ_idx=neutron_idxs,species='neutron')
-        # compute the minors
-        phi_proton=model_twobody.hf_component_from_indices(occ_idx=proton_idxs,species='proton')
-        # get the component
-        psi_hf[idx_rb]=phi_neutron*phi_proton
-    # normalization factor
-    psi_hf=psi_hf/np.linalg.norm(psi_hf)
-    # we normalize it
-    psi_hf=QPC2body.particles2restofstates @ psi_hf
-    psi_hf/=np.linalg.norm(psi_hf)
-    # get the density matrix, necessary for the BW-HF method
-    density_matrix_rr = csr_matrix(np.einsum('a,b->ab',psi_hf,psi_hf.conj()))
-    # reduce the density matrix to the R space, with rho_RR
-    #density_matrix_rr=QPC2body.particles2restofstates @ density_matrix @ QPC2body.particles2restofstates.T
-
-
-    # get the H_RR term as the identity for the 1/(E-E_hf)
-    hamiltonian_rr_2b_hf=energy_hf*identity(QPC2body.rest_basis.shape[0])
-    print('energy_hf=',energy_hf,'\n')
-    psiq_hfbw,energy_hfbw,hamiltonian_hfbw,list_infedelities_hfbw,list_errors_hfbw,_=brillouin_wigner_method_hf_ansatz(hamiltonians_hf=[hamiltonian_qq_2b,hamiltonian_qr_2b,hamiltonian_rq_2b,hamiltonian_rr_2b_hf],hamiltonian_qq=hamiltonian_qq,density_matrix_rr=density_matrix_rr,QPC2body=QPC2body,QPC=QPC,threshold=10**-3,eigvals_aci=eigvals_aci,nsteps_iteration=nsteps_iteration)
-    
-    accuracies_hfbw.append(list_errors_hfbw)
-    energies_hf_bw.append(energy_hfbw)
-    fidelity=np.abs(np.vdot(psiq_fbw,psiq_hfbw))**2
-    fidelities_hf_bw.append(fidelity)
-    distance_hf=norm(hamiltonian_fbw- hamiltonian_hfbw,ord='fro')/norm(hamiltonian_fbw,ord='fro')
-    operator_fidelities_hfbw.append(distance_hf)
 
     data = dict(
         nparticles=nparticles,
@@ -404,18 +356,10 @@ for index_run,nparts in enumerate(nparticles):
         energies_fbw=energies_fbw,
         accuracies_fbw=accuracies_fbw,
         fidelities_truncated_bw=fidelities_truncated_bw,
-        accuracies_hfbw=accuracies_hfbw,
-        energies_hfbw=energies_hf_bw,
-        fidelities_hfbw=fidelities_hf_bw,
         operator_fidelities_bw=operator_fidelities_bw,
-        operator_fidelities_hfbw=operator_fidelities_hfbw,
-        accuracies_1st=accuracies_1st,
-        energies_1st=energies_1st,
-        states_1st=states_1st,
         states_fbw=states_fbw,
         hamiltonians_fbw=hamiltonians_fbw,
-        hamiltonians_1st=hamiltonians_1st,
     )
 
-    with open('data/bw_calculations_with_hf_rr.pkl', 'wb') as f:
+    with open('data/bw_calculations_with_hfbw_truncated.pkl', 'wb') as f:
         pickle.dump(data, f)

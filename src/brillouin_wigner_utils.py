@@ -92,13 +92,14 @@ def full_brillouin_wigner_method(hamiltonians,threshold,eigvals_aci,nsteps_itera
     return psiq_orderi,e,hamiltonian_tot_qq_full_bw,infidelities_full_brillouinwigner_method,history_errors_full_brillouinwigner_method,delta_hamiltonian
 
 
-def full_brillouin_wigner_method_pauliblockade(hamiltonians,threshold,eigvals_aci,nsteps_iteration):
+def full_brillouin_wigner_method_pauliblockade(hamiltonians,threshold,eigvals_aci,nsteps_iteration,pauli_blockade_on:bool):
     """Apply the truncated Brillouin-Wigner method using the set of hamiltonians considered
 
     Args:
         hamiltonians (List[csr_matrix]): LIST of the H_QQ, H_QR pauli blockade, H_QR standard, H_RQ, H_RR and H_RR pauli_blockade hamiltonians
         threshold (float): minimum value of Delta e= E^(N_iteration)-E^(N_iteration-1) at which the loop stops. It has to be positive
-        eigvals_aci (np.ndarray): list of eigenvalues of the nsm hamiltonian to get an accuracy of the error in the energy. 
+        eigvals_aci (np.ndarray): list of eigenvalues of the nsm hamiltonian to get an accuracy of the error in the energy.
+        pauli_blockade_on (bool): if True the pauli blockade terms are included in the computation of the corrections, otherwise they are not included. 
 
     Returns:
         psi_qq (np.ndarray): ground state of the effective hamiltonian
@@ -110,12 +111,21 @@ def full_brillouin_wigner_method_pauliblockade(hamiltonians,threshold,eigvals_ac
     """
     target_eigenvalue=0
     
-    hamiltonian_qq=hamiltonians[0]
-    hamiltonian_qr_pauliblockade=hamiltonians[1]
-    hamiltonian_qr=hamiltonians[2]
-    hamiltonian_rq_pauliblockade=hamiltonians[3]
-    hamiltonian_rr=hamiltonians[4]
-    hamiltonian_rr_pauliblockade=hamiltonians[5]
+    if pauli_blockade_on:
+        hamiltonian_qq=hamiltonians[0]
+        hamiltonian_qr_pauliblockade=hamiltonians[1]
+        hamiltonian_qr=hamiltonians[2]
+        hamiltonian_rq_pauliblockade=hamiltonians[3]
+        hamiltonian_rr=hamiltonians[4]
+        hamiltonian_rr_pauliblockade=hamiltonians[5]
+    else:
+        hamiltonian_qq=hamiltonians[0]
+        hamiltonian_qr=hamiltonians[2]
+        hamiltonian_rq=hamiltonians[3]
+        hamiltonian_rr=hamiltonians[4]
+        hamiltonian_qr_pauliblockade=hamiltonian_qr
+        hamiltonian_rq_pauliblockade=hamiltonian_rq
+        hamiltonian_rr_pauliblockade=hamiltonian_rr
     
     # start computing all the correction terms necessary for the Brillouin-Wigner perturbation theory
 
@@ -326,5 +336,186 @@ def computation_pauli_blockade(basis,QPC,psi_qq):
             rho_vacuum[a,b]=value_vacuum
             
     return rho_vacuum,single_particle_density
+
+
+
+def full_brillouin_wigner_1storder(hamiltonians,threshold,eigvals_aci,nsteps_iteration):
+    """Apply the Brillouin-Wigner method using the set of hamiltonians considered
+
+    Args:
+        hamiltonians (List[csr_matrix]): LIST of the H_QQ, H_QR, H_RQ and H_RR hamiltonians
+        threshold (float): minimum value of Delta e= E^(N_iteration)-E^(N_iteration-1) at which the loop stops. It has to be positive
+        eigvals_aci (np.ndarray): list of eigenvalues of the nsm hamiltonian to get an accuracy of the error in the energy. 
+
+    Returns:
+        psi_qq (np.ndarray): ground state of the effective hamiltonian
+        e (float): energy estimated by the BW method
+        hamiltonian_tot_qq_full_bw (csr_matrix): effective hamiltonian
+        infidelities_full_brillouinwigner_method List[float]: 1-F of psi_qq with respect to the gs of H_QQ^(0) at each iteration
+        history_errors_full_brillouinwigner_method List[float]: error with respect to the exact gs energy at each iteration
+        delta_hamiltonian (np.ndarray): contribution of all the corrections in the H_QQ.
+    """
+    target_eigenvalue=0
+
+    
+    hamiltonian_qq=hamiltonians[0]
+    hamiltonian_qr=hamiltonians[1]
+    hamiltonian_rq=hamiltonians[2]
+    hamiltonian_rr=hamiltonians[3]
+    
+    # start computing all the correction terms necessary for the Brillouin-Wigner perturbation theory
+
+        
+    # then we compute the energy corrections
+    tot_hamiltonian=hamiltonian_qq
+    values,psiq_order0=eigsh(hamiltonian_qq,k=1)
+    e=values[0]
+    e_old=200
+    # we fix the delta_e_iteration to enter the while loop
+    delta_e_iteration=1.0
+
+    approximations=[]
+    print('h_qq value=',e)
+    single_term = hamiltonian_rq  # Start with initial term
+    for i in trange(nsteps_iteration):
+        
+        update=(hamiltonian_qr @ single_term)
+
+        approximations.append(update)  # Store result
+        
+    history_errors_full_brillouinwigner_method=[]
+    interaction_terms_full_brillouinwigner_method=[]
+    infidelities_full_brillouinwigner_method=[]
+    #for i in trange(nsteps_iteration):
+    i=0 # we want to count the number of iterations
+    while(delta_e_iteration>threshold):    
+        tot_hamiltonian=hamiltonian_qq
+        delta_hamiltonian=0.
+        for j in range(i):
+            delta_hamiltonian=approximations[j]/e
+        interaction_terms_full_brillouinwigner_method.append(delta_hamiltonian)
+        values,psiq_orderi=eigsh(hamiltonian_qq+delta_hamiltonian,k=1)
+        hamiltonian_tot_qq_full_bw=hamiltonian_qq+delta_hamiltonian
+        # compute the energy for this order
+        e=values[0]
+        # compute the energy difference
+        delta_e_iteration=e_old-e.copy()
+        # now you can update the old energy
+        e_old=e.copy()
+        fidelity=np.abs(np.vdot(psiq_order0,psiq_orderi))**2
+        infidelities_full_brillouinwigner_method.append(1-fidelity)
+        history_errors_full_brillouinwigner_method.append(np.abs((e-eigvals_aci[target_eigenvalue])/eigvals_aci[target_eigenvalue]))
+        i+=1
+        print(f'Iteration {i}: delta_e={delta_e_iteration}')
+    print(e)
+    print(np.abs((e-eigvals_aci[target_eigenvalue])/eigvals_aci[target_eigenvalue]),'index=',i)
+    n_steps_bw=i
+    
+    
+    return psiq_orderi,e,hamiltonian_tot_qq_full_bw,infidelities_full_brillouinwigner_method,history_errors_full_brillouinwigner_method,delta_hamiltonian
+
+
+
+
+def full_brillouin_wigner_method_pauliblockade_hf(hamiltonians,density_matrix_rr,threshold,eigvals_aci,nsteps_iteration,pauli_blockade_on:bool):
+    """Apply the truncated Brillouin-Wigner method using the set of hamiltonians considered
+
+    Args:
+        hamiltonians (List[csr_matrix]): LIST of the H_QQ, H_QR pauli blockade, H_QR standard, H_RQ, H_RR and H_RR pauli_blockade hamiltonians
+        threshold (float): minimum value of Delta e= E^(N_iteration)-E^(N_iteration-1) at which the loop stops. It has to be positive
+        eigvals_aci (np.ndarray): list of eigenvalues of the nsm hamiltonian to get an accuracy of the error in the energy.
+        pauli_blockade_on (bool): if True the pauli blockade terms are included in the computation of the corrections, otherwise they are not included. 
+        density_matrix_rr (np.ndarray): two-body density matrix in the R space computed with the HF ansatz
+    Returns:
+        psi_qq (np.ndarray): ground state of the effective hamiltonian
+        e (float): energy of the brillouin wigner method
+        hamiltonian_tot_qq_full_bw (csr_matrix): effective hamiltonian
+        infidelities_full_brillouinwigner_method List[float]: 1-F of psi_qq with respect to the gs of H_QQ^(0) at each iteration
+        history_errors_full_brillouinwigner_method List[float]: error with respect to the exact gs energy at each iteration
+        delta_hamiltonian (np.ndarray): contribution of all the corrections in the H_QQ.
+    """
+    target_eigenvalue=0
+    
+    if pauli_blockade_on:
+        hamiltonian_qq=hamiltonians[0]
+        hamiltonian_qr_pauliblockade=hamiltonians[1]
+        hamiltonian_qr=hamiltonians[2]
+        hamiltonian_rq_pauliblockade=hamiltonians[3]
+        hamiltonian_rr=hamiltonians[4]
+        hamiltonian_rr_pauliblockade=hamiltonians[5]
+    else:
+        hamiltonian_qq=hamiltonians[0]
+        hamiltonian_qr=hamiltonians[2]
+        hamiltonian_rq=hamiltonians[3]
+        hamiltonian_rr=hamiltonians[4]
+        hamiltonian_qr_pauliblockade=hamiltonian_qr
+        hamiltonian_rq_pauliblockade=hamiltonian_rq
+        hamiltonian_rr_pauliblockade=hamiltonian_rr
+    
+    # start computing all the correction terms necessary for the Brillouin-Wigner perturbation theory
+
+        
+    # then we compute the energy corrections
+    tot_hamiltonian=hamiltonian_qq
+    values,psiq_order0=eigsh(hamiltonian_qq,k=1)
+    e=values[0]
+    e_old=200
+    # we fix the delta_e_iteration to enter the while loop
+    delta_e_iteration=1.0
+
+    approximations=[]
+    print('h_qq value=',e)
+    single_term = hamiltonian_rq_pauliblockade # Start with initial term
+    for i in trange(nsteps_iteration):
+        
+        # in order to get the pauliblockade at each virtual process transition we need to consider
+        # this order of matrix multiplication
+        if i ==1:
+            # H_QR pauli_blockade H_RR pauli_blockade H_RQ
+            single_term =hamiltonian_rr  @ single_term  # Efficient update
+        
+        if i>1:
+            # like H_QR pb H_RR pb H_RR pb H_RQ (n-1 pb for n H_RR)
+            single_term=hamiltonian_rr_pauliblockade @ single_term
+        
+        if i==0:
+            # at order zero we have H_QR pauli_blockade H_RQ
+            update=(hamiltonian_qr  @ single_term)
+        else:
+            # at n-th order we have H_QR pauli_blockade H_RR pauli_blockade ... H_RR pauli_blockade H_RQ
+            update=hamiltonian_qr_pauliblockade @ density_matrix_rr @ single_term
+
+        approximations.append(update)  # Store result
+        
+    history_errors_full_brillouinwigner_method=[]
+    interaction_terms_full_brillouinwigner_method=[]
+    infidelities_full_brillouinwigner_method=[]
+    #for i in trange(nsteps_iteration):
+    i=0 # we want to count the number of iterations
+    while(delta_e_iteration>threshold):    
+        tot_hamiltonian=hamiltonian_qq
+        delta_hamiltonian=0.
+        for j in range(i):
+            delta_hamiltonian=delta_hamiltonian+approximations[j]/e**(j+1)
+        interaction_terms_full_brillouinwigner_method.append(delta_hamiltonian)
+        values,psiq_orderi=eigsh(hamiltonian_qq+delta_hamiltonian,k=1)
+        hamiltonian_tot_qq_full_bw=hamiltonian_qq+delta_hamiltonian
+        # compute the energy for this order
+        e=values[0]
+        # compute the energy difference
+        delta_e_iteration=e_old-e.copy()
+        # now you can update the old energy
+        e_old=e.copy()
+        fidelity=np.abs(np.vdot(psiq_order0,psiq_orderi))**2
+        infidelities_full_brillouinwigner_method.append(1-fidelity)
+        history_errors_full_brillouinwigner_method.append(np.abs((e-eigvals_aci[target_eigenvalue])/eigvals_aci[target_eigenvalue]))
+        i+=1
+        print(f'Iteration {i}: delta_e={delta_e_iteration}')
+    print(e)
+    print(np.abs((e-eigvals_aci[target_eigenvalue])/eigvals_aci[target_eigenvalue]),'index=',i)
+    n_steps_bw=i
+    
+    
+    return psiq_orderi,e,hamiltonian_tot_qq_full_bw,infidelities_full_brillouinwigner_method,history_errors_full_brillouinwigner_method,delta_hamiltonian
 
 
